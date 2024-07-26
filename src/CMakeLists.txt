@@ -1,5 +1,6 @@
 add_executable(fin
  main.cpp 
+ drawing.cpp
  vector_tile.pb.cc
 )
 
