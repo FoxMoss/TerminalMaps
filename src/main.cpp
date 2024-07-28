@@ -1,4 +1,5 @@
 
+#include "tiles.hpp"
 #include "vector_tile.pb.h"
 
 #include "drawing.hpp"
@@ -25,13 +26,20 @@ int main() {
     printf("Not happening\n");
     exit(0);
   }
+  vector_tile::Tile tile2;
+  std::ifstream file2("1.pbf");
+  if (!tile2.ParseFromIstream(&file2)) {
+    printf("Not happening\n");
+    exit(0);
+  }
+
   for (auto layer : tile.layers()) {
     printf("Layer: %s\n", layer.name().c_str());
-    if (layer.name() == "place") {
-      for (auto keys : layer.keys()) {
-        printf("Keys: %s\n", keys.c_str());
-      }
-    }
+    // if (layer.name() == "place") {
+    //   for (auto keys : layer.keys()) {
+    //     printf("Keys: %s\n", keys.c_str());
+    //   }
+    // }
   }
   signal(SIGINT, finish);
 
@@ -50,7 +58,7 @@ int main() {
     init_pair(1, COLOR_BLACK, COLOR_BLACK);
     init_pair(2, COLOR_GREEN, COLOR_BLACK);
     init_pair(3, COLOR_YELLOW, COLOR_BLACK);
-    init_pair(4, COLOR_BLUE, COLOR_BLACK);
+    init_pair(4, COLOR_BLACK, COLOR_BLUE);
     init_pair(5, COLOR_CYAN, COLOR_BLACK);
     init_pair(6, COLOR_MAGENTA, COLOR_BLACK);
     init_pair(7, COLOR_WHITE, COLOR_BLACK);
@@ -59,95 +67,50 @@ int main() {
 
   curs_set(0);
 
-  std::pair<float, float> global_cursor(0, 0);
-  float global_scale = 10;
+  Viewer global_view;
+  cbreak();
   for (;;) {
     clear();
+
+    attrset(COLOR_PAIR(7));
+    // draw_layer(tile, "boundry", &global_view, outline_handler, {0, 0, 1});
+    // draw_layer(tile2, "boundry", &global_view, outline_handler, {1, 0, 1});
+
     attrset(COLOR_PAIR(4));
+    draw_layer(tile, "water", &global_view, outline_handler, {0, 0, 1});
+    draw_layer(tile2, "water", &global_view, outline_handler, {2, 1, 2});
+    attrset(COLOR_PAIR(2));
+    get_drawn_tiles(&global_view, global_view.zoom, true);
+    // draw_layer(tile, "place", &global_view, text_handler, {0, 0, 1});
 
-    mvprintw(0, 0, "%s", (tile.layers().begin() + 3)->name().c_str());
-    for (auto feature : (tile.layers().begin() + 3)->features()) {
-      if (feature.type() != 3) {
-        mvprintw(1, 0, "%i", feature.type());
-        continue;
-      }
-      uint32_t current_id = 0;
-      uint32_t current_count = 0;
-      uint32_t param_left = 0;
-      bool pair_filled = false;
-      std::pair<int, int> pair;
-      std::pair<int, int> cursor = global_cursor;
-      std::vector<std::pair<int, int>> params;
-      for (auto outline : feature.geometry()) {
-        if (param_left == 0) {
-          if (current_id != 0) {
-            // handle last
-            std::pair<int, int> last_param(0, 0);
-            for (auto param : params) {
-              if (current_id == 1) {
-                cursor.first += param.first;
-                cursor.second += param.second;
-              }
+    // draw_layer(tile2, "place", &global_view, text_handler, {1, 0, 1});
 
-              if (current_id == 2) {
-                float pos_x = cursor.first += param.first;
-                float pos_y = cursor.second += param.second;
-                std::pair<int, int> proccessed_param(
-                    roundf(((float)COLS / 2) + pos_x / (global_scale)),
-                    roundf(((float)LINES / 2) + pos_y / (global_scale * 2)));
+    mvprintw(LINES - 1, 0, "[N] (%f, %f) scale %f zoom %i\n",
+             global_view.global_cursor.first, global_view.global_cursor.second,
+             global_view.global_scale, global_view.zoom);
 
-                if (last_param != std::pair<int, int>(0, 0)) {
-                  draw_line(proccessed_param, last_param);
-                }
-                last_param = proccessed_param;
-              }
-            }
-          }
-
-          params.clear();
-
-          // push new command
-          current_id = outline & 0x7;
-          current_count = outline >> 3;
-          if (current_id == 1 || current_id == 2) {
-            param_left = 2 * current_count;
-          }
-          continue;
-        }
-
-        int value = ((outline >> 1) ^ (-(outline & 1)));
-        if (!pair_filled) {
-          pair.first = value;
-          pair_filled = true;
-        } else {
-          pair.second = value;
-          params.push_back(pair);
-          pair_filled = false;
-        }
-
-        param_left--;
-      }
-    }
     attrset(COLOR_PAIR(1));
     auto key = getch();
-    float step = 5 * global_scale;
+    float step = 5 * global_view.global_scale;
     if (key == 'l') {
-      global_cursor.first -= step;
+      global_view.global_cursor.first -= step;
     }
     if (key == 'h') {
-      global_cursor.first += step;
+      global_view.global_cursor.first += step;
     }
     if (key == 'k') {
-      global_cursor.second += step;
+      global_view.global_cursor.second += step;
     }
     if (key == 'j') {
-      global_cursor.second -= step;
+      global_view.global_cursor.second -= step;
     }
-    if (key == 'w') {
-      global_scale /= 2;
+    if (key == 'w' && global_view.zoom < 22) {
+      global_view.global_scale /= 2;
+      global_view.zoom++;
     }
-    if (key == 'b') {
-      global_scale *= 2;
+    if (key == 'b' && global_view.zoom > 0) {
+      global_view.global_scale *= 2;
+      global_view.zoom--;
     }
   }
 
@@ -156,6 +119,7 @@ int main() {
 
 static void finish(int) {
   endwin();
+  nocbreak();
 
   exit(0);
 }

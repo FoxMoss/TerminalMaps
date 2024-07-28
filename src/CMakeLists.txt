@@ -2,6 +2,7 @@ add_executable(fin
  main.cpp 
  drawing.cpp
  vector_tile.pb.cc
+ tiles.cpp
 )
 
 include(FetchContent)
@@ -11,7 +12,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(argparse)
 
-target_link_libraries(fin argparse ncurses z protobuf)
+target_link_libraries(fin argparse ncurses z protobuf curses)
 
 add_custom_command(TARGET fin POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy

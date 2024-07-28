@@ -1,9 +1,26 @@
+#include "tiles.hpp"
 #include <cmath>
 #include <curses.h>
+#include <string.h>
+#include <tuple>
 #include <utility>
 
+void mvaddstr_nowrap(int y, int x, char *str) {
+  // this is naive, in future change position of null
+  size_t len = strlen((const char *)str);
+
+  for (int iter = 0; str[iter] != '\0'; iter++) {
+    if (iter + x - (int)(len / 2) > COLS) {
+      return;
+    }
+
+    mvaddch(y, x + iter - (int)(len / 2), str[iter]);
+  }
+}
+
 // https://gist.github.com/JamesPhillipsUK/fae5f5bf1e62fdf4118ed37dbbc258d2
-void draw_line(std::pair<int, int> point_1, std::pair<int, int> point_2) {
+void draw_line(std::pair<int, int> point_1, std::pair<int, int> point_2,
+               char *buffer) {
   int dx, sx, dy, sy, gradient_error, gradient_error_two;
 
   if (!((point_1.first > -COLS && point_1.first < COLS * 2 &&
@@ -20,7 +37,10 @@ void draw_line(std::pair<int, int> point_1, std::pair<int, int> point_2) {
 
   gradient_error = (dx > dy ? dx : -dy) / 2;
   for (;;) {
-    mvaddch(point_1.second, point_1.first, '.');
+    if (buffer == NULL) {
+      mvaddch(point_1.second, point_1.first, '.');
+    } else {
+    }
     if (point_1.first == point_2.first && point_1.second == point_2.second)
       break;
 
