@@ -5,42 +5,60 @@
 #include "drawing.hpp"
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <curses.h>
+#include <filesystem>
 #include <fstream>
+#include <map>
 #include <math.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <string>
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <utility>
 #include <vector>
 
+#ifndef DEVICE
+#define DEVICE CL_DEVICE_TYPE_DEFAULT
+#endif
+
+const std::string target_url = "https://d17gef4m69t9r4.cloudfront.net/planet/";
 static void finish(int sig);
 
+std::vector<std::pair<TileInfo, vector_tile::Tile *>> tile_map;
 int main() {
+
   GOOGLE_PROTOBUF_VERIFY_VERSION;
 
-  vector_tile::Tile tile;
-  std::ifstream file("0.pbf");
-  if (!tile.ParseFromIstream(&file)) {
-    printf("Not happening\n");
-    exit(0);
-  }
-  vector_tile::Tile tile2;
-  std::ifstream file2("1.pbf");
-  if (!tile2.ParseFromIstream(&file2)) {
-    printf("Not happening\n");
-    exit(0);
+  for (auto const &dir_entry : std::filesystem::directory_iterator{"."}) {
+    if (dir_entry.path().extension() == ".mvt") {
+
+      vector_tile::Tile *file_tile = new vector_tile::Tile;
+      std::ifstream file(dir_entry.path());
+      if (!file_tile->ParseFromIstream(&file)) {
+        printf("Not happening\n");
+        exit(0);
+      }
+      std::vector<uint> path_numbers;
+      std::string current_num;
+      for (auto c : dir_entry.path().filename().string()) {
+        if (c == '.') {
+          path_numbers.push_back(std::stoi(current_num));
+          current_num = "";
+          continue;
+        }
+        if (c == 'm') {
+          break;
+        }
+        current_num.push_back(c);
+      }
+      tile_map.push_back(
+          {{(int)path_numbers[1], (int)path_numbers[2], (int)path_numbers[0]},
+           file_tile});
+    }
   }
 
-  for (auto layer : tile.layers()) {
-    printf("Layer: %s\n", layer.name().c_str());
-    // if (layer.name() == "place") {
-    //   for (auto keys : layer.keys()) {
-    //     printf("Keys: %s\n", keys.c_str());
-    //   }
-    // }
-  }
   signal(SIGINT, finish);
 
   struct winsize term_window;
@@ -50,7 +68,8 @@ int main() {
   keypad(stdscr, TRUE);
   nonl();
   cbreak();
-  echo();
+  noecho();
+  nodelay(stdscr, FALSE);
 
   if (has_colors()) {
     start_color();
@@ -72,16 +91,47 @@ int main() {
   for (;;) {
     clear();
 
+    attrset(COLOR_PAIR(2));
+    auto needed_tiles = get_drawn_tiles(&global_view, global_view.zoom, false);
+
+    uint tiles_found = 0;
+    for (auto tile : needed_tiles) {
+      // bunch of copying with to_draw, future optimization?
+      vector_tile::Tile *to_draw;
+      TileInfo tile_info{(int)tile.second.first, (int)tile.second.second,
+                         (int)global_view.zoom};
+
+      bool found = false;
+      for (auto stored_tile : tile_map) {
+        if ((stored_tile.first.x == tile_info.x &&
+             stored_tile.first.y == tile_info.y &&
+             stored_tile.first.zoom == tile_info.zoom)) {
+          found = true;
+          tiles_found++;
+          to_draw = stored_tile.second;
+          break;
+        }
+      }
+      if (!found) {
+        auto tile_file = download_tile(target_url, tile_info, ".");
+        to_draw = new vector_tile::Tile;
+        if (!to_draw->ParseFromIstream(&tile_file)) {
+          continue;
+        }
+        mvprintw(0, 0, "tiles found, %i", tiles_found);
+        tile_map.push_back({tile_info, to_draw});
+      }
+
+      attrset(COLOR_PAIR(4));
+      draw_layer(*to_draw, "water", &global_view, outline_handler,
+                 {tile.first.first, tile.first.second, (int)global_view.zoom});
+      draw_layer(*to_draw, "place", &global_view, text_handler,
+                 {tile.first.first, tile.first.second, (int)global_view.zoom});
+    }
+
     attrset(COLOR_PAIR(7));
     // draw_layer(tile, "boundry", &global_view, outline_handler, {0, 0, 1});
     // draw_layer(tile2, "boundry", &global_view, outline_handler, {1, 0, 1});
-
-    attrset(COLOR_PAIR(4));
-    draw_layer(tile, "water", &global_view, outline_handler, {0, 0, 1});
-    draw_layer(tile2, "water", &global_view, outline_handler, {2, 1, 2});
-    attrset(COLOR_PAIR(2));
-    get_drawn_tiles(&global_view, global_view.zoom, true);
-    // draw_layer(tile, "place", &global_view, text_handler, {0, 0, 1});
 
     // draw_layer(tile2, "place", &global_view, text_handler, {1, 0, 1});
 
@@ -120,6 +170,10 @@ int main() {
 static void finish(int) {
   endwin();
   nocbreak();
+
+  for (auto tile : tile_map) {
+    delete tile.second;
+  }
 
   exit(0);
 }

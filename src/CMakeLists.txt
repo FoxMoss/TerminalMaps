@@ -12,7 +12,9 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(argparse)
 
-target_link_libraries(fin argparse ncurses z protobuf curses)
+find_package(OpenCL REQUIRED)
+
+target_link_libraries(fin argparse ncurses z protobuf curses curl OpenCL::OpenCL)
 
 add_custom_command(TARGET fin POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy
