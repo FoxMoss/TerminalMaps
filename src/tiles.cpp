@@ -15,21 +15,20 @@
 #include <utility>
 #include <vector>
 
-std::pair<int, int> get_screen_coords(std::pair<float, float> world_pos,
+std::pair<int, int> get_scaled_coords(std::pair<float, float> world_pos,
                                       Viewer *view, TileInfo *tile_info) {
-  float tile_size = (float)4096 / std::pow(2, tile_info->zoom + 1);
-  int tile_count = std::pow(2, tile_info->zoom + 1);
+  float tile_size = (float)4096 / std::pow(2, tile_info->zoom);
+  int tile_count = std::pow(2, tile_info->zoom);
   return std::pair<int, int>(
-      roundf(((((world_pos.first / tile_count) + view->global_cursor.first) +
-               (tile_size * tile_info->x))) /
+      roundf(((((world_pos.first / tile_count)) + (tile_size * tile_info->x))) /
              (view->global_scale)),
-      roundf((((world_pos.second / tile_count) + view->global_cursor.second) +
-              (tile_size * tile_info->y)) /
+      roundf((((world_pos.second / tile_count)) + (tile_size * tile_info->y)) /
              (view->global_scale * 2)));
 }
 
 void outline_handler(vector_tile::Tile::Feature feature, Viewer *global_view,
-                     vector_tile::Tile::Layer *layer, TileInfo *tile_info) {
+                     vector_tile::Tile::Layer *layer, TileInfo *tile_info,
+                     PrecomputedTileRender *tile_render) {
   uint32_t current_id = 0;
   uint32_t current_count = 0;
   uint32_t param_left = 0;
@@ -62,13 +61,10 @@ void outline_handler(vector_tile::Tile::Feature feature, Viewer *global_view,
                     last_param.first >= 4096 || last_param.second <= 0 ||
                     last_param.second >= 4096)) {
                 draw_line(
-                    get_screen_coords({pos_x, pos_y}, global_view, tile_info),
-                    get_screen_coords({last_param.first, last_param.second},
-                                      global_view, tile_info));
-                // auto pos =
-                //     get_screen_coords({pos_x, pos_y}, global_view,
-                //     tile_info);
-                // mvprintw(pos.second, pos.first, "(%f, %f)", pos_x, pos_y);
+                    get_scaled_coords({pos_x, pos_y}, global_view, tile_info),
+                    get_scaled_coords({last_param.first, last_param.second},
+                                      global_view, tile_info),
+                    tile_render);
               }
             } else {
               start = false;
@@ -82,7 +78,7 @@ void outline_handler(vector_tile::Tile::Feature feature, Viewer *global_view,
               first_param.second <= 0 || first_param.second >= 4096 ||
               last_param.first <= 0 || last_param.first >= 4096 ||
               last_param.second <= 0 || last_param.second >= 4096)) {
-          draw_line(first_param, last_param);
+          draw_line(first_param, last_param, tile_render);
         }
       }
 
@@ -111,7 +107,8 @@ void outline_handler(vector_tile::Tile::Feature feature, Viewer *global_view,
   }
 }
 void text_handler(vector_tile::Tile::Feature feature, Viewer *global_view,
-                  vector_tile::Tile::Layer *layer, TileInfo *tile_info) {
+                  vector_tile::Tile::Layer *layer, TileInfo *tile_info,
+                  PrecomputedTileRender *tile_render) {
   bool pair_filled = false;
   std::pair<uint, uint> pair;
   std::vector<std::pair<uint, uint>> raw_pairs;
@@ -128,9 +125,19 @@ void text_handler(vector_tile::Tile::Feature feature, Viewer *global_view,
   std::map<std::string, std::string> keyval;
   for (auto pair : raw_pairs) {
     auto key = layer->keys()[pair.first];
-    if (!layer->values()[pair.second].has_string_value())
-      continue;
-    auto val = layer->values()[pair.second].string_value();
+    std::string val = "";
+    if (layer->values()[pair.second].has_string_value()) {
+      val = layer->values()[pair.second].string_value();
+    }
+    if (layer->values()[pair.second].has_int_value()) {
+      val = std::to_string(layer->values()[pair.second].int_value());
+    }
+    if (layer->values()[pair.second].has_uint_value()) {
+      val = std::to_string(layer->values()[pair.second].uint_value());
+    }
+    if (layer->values()[pair.second].has_sint_value()) {
+      val = std::to_string(layer->values()[pair.second].sint_value());
+    }
     keyval[key] = val;
   }
 
@@ -138,22 +145,20 @@ void text_handler(vector_tile::Tile::Feature feature, Viewer *global_view,
   int pos_y = ((feature.geometry(2) >> 1) ^ (-(feature.geometry(2) & 1)));
 
   auto proccessed_param =
-      get_screen_coords(std::pair<float, float>{(float)pos_x, (float)pos_y},
+      get_scaled_coords(std::pair<float, float>{(float)pos_x, (float)pos_y},
                         global_view, tile_info);
-  if (!(proccessed_param.first > 0 && proccessed_param.first < COLS &&
-        proccessed_param.second > 0 && proccessed_param.second < LINES)) {
+  if (std::stoi(keyval["rank"]) > std::max((int)global_view->zoom, 1)) {
     return;
   }
-
   if (keyval.find("name:en") != keyval.end()) {
     mvaddstr_nowrap(proccessed_param.second, proccessed_param.first,
-                    (char *)keyval["name:en"].c_str());
+                    (char *)keyval["name:en"].c_str(), tile_render);
   }
 }
 
 void draw_layer(vector_tile::Tile tile, std::string layer_name,
-                Viewer *global_view, FeatureHandler handler,
-                TileInfo tile_info) {
+                Viewer *global_view, FeatureHandler handler, TileInfo tile_info,
+                PrecomputedTileRender *tile_render) {
   vector_tile::Tile::Layer layer_copy;
   bool found = false;
   for (auto layer : tile.layers()) {
@@ -167,16 +172,16 @@ void draw_layer(vector_tile::Tile tile, std::string layer_name,
     return;
   }
   for (auto feature : layer_copy.features()) {
-    handler(feature, global_view, &layer_copy, &tile_info);
+    handler(feature, global_view, &layer_copy, &tile_info, tile_render);
   }
 }
 
 std::vector<std::pair<std::pair<int, int>, std::pair<uint, uint>>>
 get_drawn_tiles(Viewer *view, uint zoom, bool debug) {
-  float tile_size = 4096 / std::pow(2, zoom + 1);
+  float tile_size = 4096 / std::pow(2, zoom);
   int tile_mod = std::pow(2, zoom);
   int start_tile_x = floor(-view->global_cursor.first / tile_size);
-  int start_tile_y = floor(-view->global_cursor.second / tile_size);
+  int start_tile_y = floor(-view->global_cursor.second / tile_size * 2);
 
   std::vector<std::pair<std::pair<int, int>, std::pair<uint, uint>>> tiles;
   for (int x = std::clamp(start_tile_x, 0, tile_mod);
@@ -188,12 +193,14 @@ get_drawn_tiles(Viewer *view, uint zoom, bool debug) {
   }
 
   if (debug) {
-    TileInfo null_tile{0, 0, 0};
     for (auto tile : tiles) {
-      auto screen = get_screen_coords(
-          {tile.first.first * tile_size, tile.first.second * tile_size}, view,
-          &null_tile);
-      mvprintw(screen.second, screen.first, "tile %i/%i/%i sized %f", zoom,
+      TileInfo got_tile{tile.first.first, tile.first.second, (int)zoom};
+      auto screen = get_scaled_coords({0, 0}, view, &got_tile);
+      int real_x = screen.first +
+                   roundf((view->global_cursor.first / view->global_scale));
+      int real_y = screen.second +
+                   roundf((view->global_cursor.second / view->global_scale));
+      mvprintw(real_y, real_x, "tile %i/%i/%i sized %f", zoom,
                tile.second.first, tile.second.second, tile_size);
     }
   }

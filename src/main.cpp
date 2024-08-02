@@ -19,14 +19,11 @@
 #include <utility>
 #include <vector>
 
-#ifndef DEVICE
-#define DEVICE CL_DEVICE_TYPE_DEFAULT
-#endif
-
 const std::string target_url = "https://d17gef4m69t9r4.cloudfront.net/planet/";
 static void finish(int sig);
 
 std::vector<std::pair<TileInfo, vector_tile::Tile *>> tile_map;
+std::vector<std::pair<TileInfo, PrecomputedTileRender *>> tile_render_map;
 int main() {
 
   GOOGLE_PROTOBUF_VERIFY_VERSION;
@@ -77,7 +74,7 @@ int main() {
     init_pair(1, COLOR_BLACK, COLOR_BLACK);
     init_pair(2, COLOR_GREEN, COLOR_BLACK);
     init_pair(3, COLOR_YELLOW, COLOR_BLACK);
-    init_pair(4, COLOR_BLACK, COLOR_BLUE);
+    init_pair(4, COLOR_BLACK, COLOR_GREEN);
     init_pair(5, COLOR_CYAN, COLOR_BLACK);
     init_pair(6, COLOR_MAGENTA, COLOR_BLACK);
     init_pair(7, COLOR_WHITE, COLOR_BLACK);
@@ -94,20 +91,31 @@ int main() {
     attrset(COLOR_PAIR(2));
     auto needed_tiles = get_drawn_tiles(&global_view, global_view.zoom, false);
 
-    uint tiles_found = 0;
     for (auto tile : needed_tiles) {
-      // bunch of copying with to_draw, future optimization?
+      PrecomputedTileRender *precom_draw = NULL;
       vector_tile::Tile *to_draw;
       TileInfo tile_info{(int)tile.second.first, (int)tile.second.second,
                          (int)global_view.zoom};
 
+      for (auto render_tile : tile_render_map) {
+        if (render_tile.first.x == tile_info.x &&
+            render_tile.first.y == tile_info.y &&
+            render_tile.first.zoom == tile_info.zoom) {
+          precom_draw = render_tile.second;
+          break;
+        }
+      }
       bool found = false;
+      uint line = 0;
+      if (precom_draw != NULL) {
+        goto precom;
+      }
+
       for (auto stored_tile : tile_map) {
         if ((stored_tile.first.x == tile_info.x &&
              stored_tile.first.y == tile_info.y &&
              stored_tile.first.zoom == tile_info.zoom)) {
           found = true;
-          tiles_found++;
           to_draw = stored_tile.second;
           break;
         }
@@ -118,22 +126,44 @@ int main() {
         if (!to_draw->ParseFromIstream(&tile_file)) {
           continue;
         }
-        mvprintw(0, 0, "tiles found, %i", tiles_found);
         tile_map.push_back({tile_info, to_draw});
       }
 
-      attrset(COLOR_PAIR(4));
+      precom_draw = new PrecomputedTileRender(tile_info);
       draw_layer(*to_draw, "water", &global_view, outline_handler,
-                 {tile.first.first, tile.first.second, (int)global_view.zoom});
+                 {tile.first.first, tile.first.second, (int)global_view.zoom},
+                 precom_draw);
       draw_layer(*to_draw, "place", &global_view, text_handler,
-                 {tile.first.first, tile.first.second, (int)global_view.zoom});
+                 {tile.first.first, tile.first.second, (int)global_view.zoom},
+                 precom_draw);
+      tile_render_map.push_back({tile_info, precom_draw});
+
+      for (auto layer : to_draw->layers()) {
+        mvprintw(line, 0, "%s", layer.name().c_str());
+        line++;
+      }
+
+    precom:
+      for (auto pixel : precom_draw->buffer) {
+
+        float tile_size = (float)4096 / std::pow(2, tile_info.zoom + 1);
+
+        int real_x =
+            pixel.first.first +
+            roundf(global_view.global_cursor.first / global_view.global_scale);
+        int real_y =
+            pixel.first.second +
+            roundf(global_view.global_cursor.second / global_view.global_scale);
+        if (pixel.second == '#')
+          attrset(COLOR_PAIR(4));
+        else
+          attrset(COLOR_PAIR(7));
+        mvaddch(real_y, real_x, pixel.second);
+      }
     }
 
-    attrset(COLOR_PAIR(7));
-    // draw_layer(tile, "boundry", &global_view, outline_handler, {0, 0, 1});
-    // draw_layer(tile2, "boundry", &global_view, outline_handler, {1, 0, 1});
-
-    // draw_layer(tile2, "place", &global_view, text_handler, {1, 0, 1});
+    attrset(COLOR_PAIR(2));
+    mvaddch(LINES / 2, COLS / 2, '+');
 
     mvprintw(LINES - 1, 0, "[N] (%f, %f) scale %f zoom %i\n",
              global_view.global_cursor.first, global_view.global_cursor.second,
@@ -154,11 +184,15 @@ int main() {
     if (key == 'j') {
       global_view.global_cursor.second -= step;
     }
-    if (key == 'w' && global_view.zoom < 22) {
+    if (key == 'w' && global_view.zoom < 14) {
       global_view.global_scale /= 2;
+      global_view.global_cursor.first -= COLS / 2 * global_view.global_scale;
+      global_view.global_cursor.second -= LINES / 2 * global_view.global_scale;
       global_view.zoom++;
     }
     if (key == 'b' && global_view.zoom > 0) {
+      global_view.global_cursor.first += COLS / 2 * global_view.global_scale;
+      global_view.global_cursor.second += LINES / 2 * global_view.global_scale;
       global_view.global_scale *= 2;
       global_view.zoom--;
     }
